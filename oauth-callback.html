@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>OAuth callback</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; padding: 16px; background: #f6f7f8; color: #1d2329; }
+  pre { background: #fff; border: 1px solid #d9dee2; border-radius: 6px; padding: 10px; white-space: pre-wrap; word-break: break-all; }
+  textarea { width: 100%; height: 60px; font: 12px ui-monospace, monospace; box-sizing: border-box; }
+  button { font: inherit; padding: 6px 12px; border: 1px solid #0e6b86; background: #fff; color: #0e6b86; border-radius: 6px; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Authorization callback</h1>
+<p>The code is single use and expires quickly. Copy it and run the exchange script right away. Nothing on this page is sent to any server.</p>
+<pre id="meta"></pre>
+<textarea id="code" readonly></textarea>
+<button id="copy" type="button">Copy code</button>
+<script>
+  const q = new URLSearchParams(location.search);
+  const code = q.get('code') || '';
+  document.getElementById('code').value = code;
+  document.getElementById('meta').textContent = JSON.stringify({
+    codeLength: code.length,
+    state: q.get('state'),
+    error: q.get('error'),
+    error_description: q.get('error_description'),
+    otherParams: [...q.keys()].filter((k) => !['code', 'state', 'error', 'error_description'].includes(k)),
+  }, null, 2);
+  document.getElementById('copy').addEventListener('click', async () => {
+    const el = document.getElementById('code');
+    try { await navigator.clipboard.writeText(el.value); } catch (e) { el.select(); }
+  });
+  // 주소창과 기록에서 코드를 지운다.
+  history.replaceState(null, '', location.pathname);
+</script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSF probe</title>
+<script src="https://cdn.elliemae.io/elliemae/core/ssf/1.0/elli.ssf.guest-with-polyfill.js"></script>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 16px; background: #f6f7f8; color: #1d2329; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 18px 0 6px; }
+  .note { color: #59636b; margin: 0 0 12px; }
+  pre { background: #fff; border: 1px solid #d9dee2; border-radius: 6px; padding: 10px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin: 0; }
+  textarea { width: 100%; height: 72px; font: 12px ui-monospace, monospace; box-sizing: border-box; }
+  button, a.btn { font: inherit; padding: 6px 12px; margin: 4px 6px 4px 0; border: 1px solid #0e6b86; background: #fff; color: #0e6b86; border-radius: 6px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .ok { color: #276a43; } .bad { color: #a3271f; }
+</style>
+</head>
+<body>
+<h1>SSF probe (read-only)</h1>
+<p class="note">Shows what the host application passes to a guest page. Nothing on this page is sent to any server.</p>
+
+<h2>1. Frame</h2>
+<pre id="frame">checking...</pre>
+
+<h2>2. Guest registration and objects</h2>
+<pre id="objects">waiting...</pre>
+
+<h2>3. User (tpoApplication.getUserData / auth.getUser)</h2>
+<pre id="user">waiting...</pre>
+
+<h2>4. Access token (auth.getAccessToken)</h2>
+<pre id="tokenMeta">waiting...</pre>
+<textarea id="token" readonly placeholder="access_token appears here"></textarea>
+<button id="copyToken" type="button">Copy access token</button>
+
+<h2>5. Auth code (auth.createAuthCode, deprecated)</h2>
+<p class="note">Single use. Press once, then run the exchange script within a minute.</p>
+<button id="makeCode" type="button">Create auth code</button>
+<pre id="codeMeta">not requested</pre>
+<textarea id="code" readonly placeholder="auth code appears here"></textarea>
+<button id="copyCode" type="button">Copy auth code</button>
+
+<h2>6. New tab from inside the frame</h2>
+<button id="openWin" type="button">window.open</button>
+<a class="btn" id="openLink" href="handoff-landing.html#anchor-target-blank" target="_blank" rel="noopener">Link with target=_blank</a>
+<pre id="tabResult">not tried</pre>
+
+<script>
+  const show = (id, value) => {
+    document.getElementById(id).textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  };
+  const errText = (e) => (e && (e.message || e.toString())) || String(e);
+
+  const frameInfo = () => {
+    let inFrame = 'unknown';
+    try { inFrame = window.self !== window.top; } catch (e) { inFrame = 'true (cross-origin top)'; }
+    show('frame', {
+      inFrame,
+      origin: location.origin,
+      referrerHost: document.referrer ? new URL(document.referrer).host : '(none)',
+      guestLibraryLoaded: typeof window.elli !== 'undefined' && !!(window.elli && window.elli.script),
+    });
+  };
+
+  let auth = null;
+
+  async function run() {
+    frameInfo();
+    const objects = {};
+    try {
+      const r = elli.script.guest.create();
+      if (r && typeof r.then === 'function') await r;
+      objects.guestCreate = 'ok';
+    } catch (e) {
+      objects.guestCreate = 'error: ' + errText(e);
+    }
+    const got = {};
+    for (const name of ['tpoApplication', 'auth', 'loan', 'http']) {
+      try {
+        got[name] = await elli.script.getObject(name);
+        objects[name] = got[name] ? 'available' : 'empty';
+      } catch (e) {
+        objects[name] = 'error: ' + errText(e);
+      }
+    }
+    show('objects', objects);
+    auth = got.auth || null;
+
+    const user = {};
+    try { user.getUserData = await got.tpoApplication.getUserData(); } catch (e) { user.getUserData = 'error: ' + errText(e); }
+    try { user.getUser = await got.auth.getUser(); } catch (e) { user.getUser = 'error: ' + errText(e); }
+    try {
+      const org = await got.tpoApplication.getExternalOrgDetails();
+      user.externalOrgKeys = org ? Object.keys(org) : null;
+    } catch (e) { user.externalOrgKeys = 'error: ' + errText(e); }
+    show('user', user);
+
+    try {
+      const t = await got.auth.getAccessToken();
+      document.getElementById('token').value = (t && t.access_token) || '';
+      show('tokenMeta', {
+        tokenLength: t && t.access_token ? t.access_token.length : 0,
+        host_name: t && t.host_name,
+        token_type: t && t.token_type,
+        otherKeys: t ? Object.keys(t).filter((k) => !['access_token', 'host_name', 'token_type'].includes(k)) : [],
+      });
+    } catch (e) {
+      show('tokenMeta', 'error: ' + errText(e));
+    }
+  }
+
+  async function copyFrom(id) {
+    const el = document.getElementById(id);
+    try { await navigator.clipboard.writeText(el.value); } catch (e) { el.select(); }
+  }
+  document.getElementById('copyToken').addEventListener('click', () => copyFrom('token'));
+  document.getElementById('copyCode').addEventListener('click', () => copyFrom('code'));
+
+  document.getElementById('makeCode').addEventListener('click', async () => {
+    if (!auth) { show('codeMeta', 'auth object not available'); return; }
+    try {
+      const c = await auth.createAuthCode();
+      const code = typeof c === 'string' ? c : (c && (c.code || c.authCode)) || '';
+      document.getElementById('code').value = code;
+      show('codeMeta', { returnedType: typeof c, codeLength: code.length, keys: c && typeof c === 'object' ? Object.keys(c) : [] });
+    } catch (e) {
+      show('codeMeta', 'error: ' + errText(e));
+    }
+  });
+
+  document.getElementById('openWin').addEventListener('click', () => {
+    let result;
+    try {
+      const w = window.open('handoff-landing.html#window-open', '_blank');
+      result = w ? 'window.open returned a window handle' : 'window.open returned null (blocked or noopener)';
+    } catch (e) {
+      result = 'window.open threw: ' + errText(e);
+    }
+    show('tabResult', result + '. Check whether a new tab actually appeared.');
+  });
+  document.getElementById('openLink').addEventListener('click', () => {
+    show('tabResult', 'Link clicked. Check whether a new tab actually appeared.');
+  });
+
+  window.addEventListener('load', () => {
+    if (!window.elli || !window.elli.script) {
+      frameInfo();
+      show('objects', 'guest library not loaded');
+      return;
+    }
+    run().catch((e) => show('objects', 'unexpected error: ' + errText(e)));
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New tab landing</title>
+<style>body { font: 14px/1.5 system-ui, sans-serif; padding: 16px; background: #f6f7f8; color: #1d2329; } pre { background: #fff; border: 1px solid #d9dee2; border-radius: 6px; padding: 10px; }</style>
+</head>
+<body>
+<h1>New tab opened</h1>
+<pre id="out"></pre>
+<script>
+  document.getElementById('out').textContent = JSON.stringify({
+    openedBy: location.hash.replace('#', '') || '(no marker)',
+    hasOpener: !!window.opener,
+    isTopLevel: window.self === window.top,
+  }, null, 2);
+</script>
+</body>
+</html>
