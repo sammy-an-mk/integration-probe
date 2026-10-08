@@ -19,6 +19,7 @@
 <body>
 <h1>SSF probe (read-only)</h1>
 <p class="note">Shows what the host application passes to a guest page. Nothing on this page is sent to any server.</p>
+<p class="note" id="elapsed">Page open for 0:00</p>
 
 <h2>1. Frame</h2>
 <pre id="frame">checking...</pre>
@@ -33,6 +34,9 @@
 <pre id="tokenMeta">waiting...</pre>
 <textarea id="token" readonly placeholder="access_token appears here"></textarea>
 <button id="copyToken" type="button">Copy access token</button>
+<button id="tokenAgain" type="button">Get token again</button>
+<p class="note">History shows a short fingerprint, never the token itself.</p>
+<pre id="tokenHistory">none yet</pre>
 
 <h2>5. Auth code (auth.createAuthCode, deprecated)</h2>
 <p class="note">Single use. Press once, then run the exchange script within a minute.</p>
@@ -45,6 +49,14 @@
 <button id="openWin" type="button">window.open</button>
 <a class="btn" id="openLink" href="handoff-landing.html#anchor-target-blank" target="_blank" rel="noopener">Link with target=_blank</a>
 <pre id="tabResult">not tried</pre>
+
+<h2>7. Loan context (loan.all)</h2>
+<p class="note">Only the identifier fields are shown. The rest of the loan object is not rendered.</p>
+<pre id="loanMeta">waiting...</pre>
+<input id="loanGuid" readonly placeholder="loan GUID" style="width:100%;font:12px ui-monospace,monospace;box-sizing:border-box">
+<button id="copyGuid" type="button">Copy loan GUID</button>
+<input id="loanNumber" readonly placeholder="loan number" style="width:100%;font:12px ui-monospace,monospace;box-sizing:border-box">
+<button id="copyNumber" type="button">Copy loan number</button>
 
 <script>
   const show = (id, value) => {
@@ -60,10 +72,72 @@
       origin: location.origin,
       referrerHost: document.referrer ? new URL(document.referrer).host : '(none)',
       guestLibraryLoaded: typeof window.elli !== 'undefined' && !!(window.elli && window.elli.script),
+      queryKeys: [...new URLSearchParams(location.search).keys()],
+      hasHash: location.hash.length > 1,
     });
   };
 
   let auth = null;
+  const loadedAt = Date.now();
+  const sinceLoad = () => {
+    const sec = Math.floor((Date.now() - loadedAt) / 1000);
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  };
+  setInterval(() => { document.getElementById('elapsed').textContent = `Page open for ${sinceLoad()}`; }, 1000);
+
+  // 토큰 자체는 기록에 남기지 않는다 — SHA-256 앞 6바이트만 비교에 쓴다.
+  const fingerprint = async (s) => {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+    return [...new Uint8Array(buf)].slice(0, 6).map((b) => b.toString(16).padStart(2, '0')).join('');
+  };
+  const tokenHistory = [];
+  async function fetchToken() {
+    if (!auth) { show('tokenMeta', 'auth object not available'); return; }
+    try {
+      const t = await auth.getAccessToken();
+      const token = (t && t.access_token) || '';
+      document.getElementById('token').value = token;
+      show('tokenMeta', {
+        tokenLength: token.length,
+        host_name: t && t.host_name,
+        token_type: t && t.token_type,
+        otherKeys: t ? Object.keys(t).filter((k) => !['access_token', 'host_name', 'token_type'].includes(k)) : [],
+      });
+      const fp = token ? await fingerprint(token) : '(empty)';
+      tokenHistory.push({ at: new Date().toLocaleTimeString(), pageOpenFor: sinceLoad(), length: token.length, fingerprint: fp, sameAsFirst: tokenHistory.length === 0 ? '-' : fp === tokenHistory[0].fingerprint });
+      show('tokenHistory', tokenHistory);
+    } catch (e) {
+      show('tokenMeta', 'error: ' + errText(e));
+      tokenHistory.push({ at: new Date().toLocaleTimeString(), pageOpenFor: sinceLoad(), error: errText(e) });
+      show('tokenHistory', tokenHistory);
+    }
+  }
+
+  const GUID = /^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i;
+  async function readLoan(loan) {
+    if (!loan) { show('loanMeta', 'loan object not available'); return; }
+    const out = {};
+    try {
+      const d = await loan.all();
+      if (!d || typeof d !== 'object') {
+        out.all = 'returned ' + (d === null ? 'null' : typeof d);
+      } else {
+        const idKey = ['id', 'loanId', 'encompassId', 'guid'].find((k) => typeof d[k] === 'string' && d[k]);
+        const numKey = ['loanIdNumber', 'loanNumber'].find((k) => typeof d[k] === 'string' && d[k]);
+        out.idKey = idKey || '(none)';
+        out.idLooksLikeGuid = idKey ? GUID.test(d[idKey]) : false;
+        out.loanNumberKey = numKey || '(none)';
+        out.topLevelKeyCount = Object.keys(d).length;
+        out.hasTpoKey = Object.keys(d).filter((k) => /tpo/i.test(k));
+        document.getElementById('loanGuid').value = idKey ? d[idKey] : '';
+        document.getElementById('loanNumber').value = numKey ? d[numKey] : '';
+      }
+    } catch (e) {
+      out.all = 'error: ' + errText(e);
+    }
+    try { out.isReadOnly = await loan.isReadOnly(); } catch (e) { out.isReadOnly = 'error: ' + errText(e); }
+    show('loanMeta', out);
+  }
 
   async function run() {
     frameInfo();
@@ -96,18 +170,8 @@
     } catch (e) { user.externalOrgKeys = 'error: ' + errText(e); }
     show('user', user);
 
-    try {
-      const t = await got.auth.getAccessToken();
-      document.getElementById('token').value = (t && t.access_token) || '';
-      show('tokenMeta', {
-        tokenLength: t && t.access_token ? t.access_token.length : 0,
-        host_name: t && t.host_name,
-        token_type: t && t.token_type,
-        otherKeys: t ? Object.keys(t).filter((k) => !['access_token', 'host_name', 'token_type'].includes(k)) : [],
-      });
-    } catch (e) {
-      show('tokenMeta', 'error: ' + errText(e));
-    }
+    await fetchToken();
+    await readLoan(got.loan || null);
   }
 
   async function copyFrom(id) {
@@ -116,6 +180,9 @@
   }
   document.getElementById('copyToken').addEventListener('click', () => copyFrom('token'));
   document.getElementById('copyCode').addEventListener('click', () => copyFrom('code'));
+  document.getElementById('copyGuid').addEventListener('click', () => copyFrom('loanGuid'));
+  document.getElementById('copyNumber').addEventListener('click', () => copyFrom('loanNumber'));
+  document.getElementById('tokenAgain').addEventListener('click', () => fetchToken());
 
   document.getElementById('makeCode').addEventListener('click', async () => {
     if (!auth) { show('codeMeta', 'auth object not available'); return; }
