@@ -32,10 +32,12 @@
 
 <h2>4. Access token (auth.getAccessToken)</h2>
 <pre id="tokenMeta">waiting...</pre>
-<textarea id="token" readonly placeholder="access_token appears here"></textarea>
+<p class="note">The token is never shown as page text, so copying the whole page does not include it. Use the button.</p>
 <button id="copyToken" type="button">Copy access token</button>
 <button id="tokenAgain" type="button">Get token again</button>
 <p class="note">History shows a short fingerprint, never the token itself.</p>
+<pre id="copyStatus">not copied</pre>
+<textarea id="tokenFallback" readonly hidden></textarea>
 <pre id="tokenHistory">none yet</pre>
 
 <h2>5. Auth code (auth.createAuthCode, deprecated)</h2>
@@ -91,12 +93,13 @@
     return [...new Uint8Array(buf)].slice(0, 6).map((b) => b.toString(16).padStart(2, '0')).join('');
   };
   const tokenHistory = [];
+  let currentToken = '';
   async function fetchToken() {
     if (!auth) { show('tokenMeta', 'auth object not available'); return; }
     try {
       const t = await auth.getAccessToken();
       const token = (t && t.access_token) || '';
-      document.getElementById('token').value = token;
+      currentToken = token;
       show('tokenMeta', {
         tokenLength: token.length,
         host_name: t && t.host_name,
@@ -178,7 +181,19 @@
     const el = document.getElementById(id);
     try { await navigator.clipboard.writeText(el.value); } catch (e) { el.select(); }
   }
-  document.getElementById('copyToken').addEventListener('click', () => copyFrom('token'));
+  // 토큰은 화면 글자로 두지 않는다 — 클립보드가 막혔을 때만 15초 동안 선택된 칸으로 보여 준다.
+  document.getElementById('copyToken').addEventListener('click', async () => {
+    if (!currentToken) { show('copyStatus', 'no token yet'); return; }
+    try {
+      await navigator.clipboard.writeText(currentToken);
+      show('copyStatus', `copied (length ${currentToken.length})`);
+    } catch (e) {
+      const el = document.getElementById('tokenFallback');
+      el.value = currentToken; el.hidden = false; el.select();
+      show('copyStatus', 'Clipboard is blocked in this frame. The box below is selected: press Ctrl+C now. It clears in 15 seconds.');
+      setTimeout(() => { el.value = ''; el.hidden = true; show('copyStatus', 'cleared'); }, 15000);
+    }
+  });
   document.getElementById('copyCode').addEventListener('click', () => copyFrom('code'));
   document.getElementById('copyGuid').addEventListener('click', () => copyFrom('loanGuid'));
   document.getElementById('copyNumber').addEventListener('click', () => copyFrom('loanNumber'));
